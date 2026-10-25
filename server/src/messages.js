@@ -21,7 +21,7 @@ router.get('/', requireAuth, async (req, res) => {
     if (before) { where += ' AND m.id < $3'; params.push(before); }
 
     const r = await pool.query(
-      `SELECT m.id, m.text, m.created_at,
+      `SELECT m.id, m.text, m.type, m.created_at,
               u.id AS user_id, u.username
        FROM messages m JOIN users u ON u.id = m.user_id
        WHERE ${where}
@@ -29,7 +29,7 @@ router.get('/', requireAuth, async (req, res) => {
        LIMIT $2`,
       params
     );
-    res.json(r.rows.reverse()); 
+    res.json(r.rows.reverse());
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -46,8 +46,8 @@ router.post('/', requireAuth, async (req, res) => {
     if (member.rowCount === 0) return res.status(403).json({ error: 'not a member' });
 
     const r = await pool.query(
-      `INSERT INTO messages (channel_id, user_id, text) VALUES ($1, $2, $3)
-       RETURNING id, text, created_at, user_id`,
+      `INSERT INTO messages (channel_id, user_id, text, type) VALUES ($1, $2, $3, 'user')
+       RETURNING id, text, type, created_at, user_id`,
       [channelId, req.user.id, text.trim()]
     );
     const msg = { ...r.rows[0], username: req.user.username, channel_id: channelId };

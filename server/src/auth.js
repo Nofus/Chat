@@ -23,6 +23,34 @@ router.post('/register', async (req, res) => {
       [username, hash]
     );
     const user = r.rows[0];
+
+    // авто-вступление в general + системное сообщение
+    const g = await pool.query(
+      'SELECT id FROM channels WHERE is_system = true LIMIT 1'
+    );
+    if (g.rowCount > 0) {
+      const gId = g.rows[0].id;
+      await pool.query(
+        `INSERT INTO channel_members (channel_id, user_id, role)
+         VALUES ($1, $2, 'member') ON CONFLICT DO NOTHING`,
+        [gId, user.id]
+      );
+      const sysMsg = await pool.query(
+        `INSERT INTO messages (channel_id, user_id, text, type)
+         VALUES ($1, $2, 'вступает в канал', 'system')
+         RETURNING id, text, type, created_at, user_id`,
+        [gId, user.id]
+      );
+      const io = req.app.get('io');
+      if (io) {
+        io.to(`channel:${gId}`).emit('message:new', {
+          ...sysMsg.rows[0],
+          username: user.username,
+          channel_id: gId,
+        });
+      }
+    }
+
     res.json({ token: sign(user), user });
   } catch (e) {
     if (e.code === '23505') return res.status(409).json({ error: 'username taken' });
@@ -44,7 +72,6 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// middleware для защищённых роутов
 function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;

@@ -35,3 +35,51 @@ button { cursor: pointer; }
 .composer input { flex: 1; padding: 10px; font-size: 16px; }
 .composer button { padding: 10px 16px; }
 .placeholder { margin: auto; color: #888; }
+.search-box { position: relative; margin-bottom: 8px; }
+.search { width: 100%; padding: 8px; border-radius: 6px; border: none; }
+.search-results {
+  position: absolute; left: 0; right: 0; top: 100%; z-index: 10;
+  background: #111827; border-radius: 6px; padding: 4px 0; margin: 2px 0 0;
+  list-style: none; max-height: 240px; overflow-y: auto;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+}
+.search-results li { padding: 6px 10px; cursor: pointer; }
+.search-results li:hover { background: #374151; }
+.create-btn {
+  background: #2563eb; color: white; border: none;
+  padding: 8px; border-radius: 6px; margin-bottom: 8px;
+}
+.create-form {
+  display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px;
+  background: #111827; padding: 8px; border-radius: 6px;
+}
+.create-form input:not([type=checkbox]) { padding: 6px; border-radius: 4px; border: none; }
+.create-form button { padding: 6px; border: none; border-radius: 4px; background: #059669; color: white; }
+.channel-list { list-style: none; padding: 0; margin: 0; overflow-y: auto; }
+.channel-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.channel-item .leave-btn {
+  opacity: 0;
+  background: none;
+  border: none;
+  color: #9ca3af;
+  font-size: 14px;
+  padding: 2px 6px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: opacity 0.15s;
+}
+.channel-item:hover .leave-btn { opacity: 1; }
+.channel-item .leave-btn:hover { background: #7f1d1d; color: white; }
+
+.msg-system {
+  padding: 6px 0;
+  color: #6b7280;
+  font-size: 13px;
+  font-style: italic;
+  text-align: center;
+  border-bottom: 1px solid #f3f4f6;
+}
