@@ -24,7 +24,6 @@ router.post('/register', async (req, res) => {
     );
     const user = r.rows[0];
 
-    // авто-вступление в general + системное сообщение
     const g = await pool.query(
       'SELECT id FROM channels WHERE is_system = true LIMIT 1'
     );
@@ -66,7 +65,16 @@ router.post('/login', async (req, res) => {
     if (!user) return res.status(401).json({ error: 'invalid credentials' });
     const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ error: 'invalid credentials' });
-    res.json({ token: sign(user), user: { id: user.id, username: user.username } });
+    res.json({ 
+      token: sign(user), 
+      user: { 
+        id: user.id, 
+        username: user.username, 
+        avatar_url: user.avatar_url, 
+        bio: user.bio, 
+        last_seen_at: user.last_seen_at 
+      } 
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

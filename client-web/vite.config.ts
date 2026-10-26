@@ -3,16 +3,12 @@ import react from '@vitejs/plugin-react';
 import basicSsl from '@vitejs/plugin-basic-ssl';
 
 export default defineConfig({
-  plugins: [react(),  basicSsl()],
+  plugins: [react(), basicSsl()],
   server: {
-    allowedHosts: [
-      '.trycloudflare.com',
-      '.loca.lt',       
-      '.ngrok-free.app', 
-      '.pinggy.io',      
-      '.localhost.cc',
-    ],
+    host: true,
+    allowedHosts: ['.trycloudflare.com', '.loca.lt', '.ngrok-free.app', '.pinggy.io'],
     proxy: {
+      // Единое правило для API (включая картинки)
       '/api': {
         target: 'http://localhost:3000',
         changeOrigin: true,
@@ -24,6 +20,5 @@ export default defineConfig({
         changeOrigin: true,
       },
     },
-    host: true,
   },
 });

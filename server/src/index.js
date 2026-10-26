@@ -7,14 +7,20 @@ const pool = require('./db');
 const { router: authRouter, requireAuth } = require('./auth');
 const channelsRouter = require('./channels');
 const messagesRouter = require('./messages');
+const usersRouter = require('./users');
+const path = require('path');
 require('dotenv').config();
 
 const app = express();
 app.use(cors());
 app.use(express.json());
+
 app.use('/auth', authRouter);
 app.use('/channels', channelsRouter);
 app.use('/channels/:channelId/messages', messagesRouter);
+app.use('/users', usersRouter);
+
+app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
@@ -41,7 +47,8 @@ io.use((socket, next) => {
 io.on('connection', async (socket) => {
   console.log('socket connected:', socket.id, 'user:', socket.user.username);
 
-  // Подписываем на все каналы пользователя (включая скрытые DM, чтобы получать уведомления)
+  socket.join(`user:${socket.user.id}`);
+
   try {
     const channels = await pool.query(
       'SELECT channel_id FROM channel_members WHERE user_id = $1',
@@ -52,6 +59,17 @@ io.on('connection', async (socket) => {
     console.error('Error joining channels:', e);
   }
 
+  socket.on('disconnect', async () => {
+    try {
+      const room = io.sockets.adapter.rooms.get(`user:${socket.user.id}`);
+      if (!room || room.size === 0) {
+        await pool.query('UPDATE users SET last_seen_at = NOW() WHERE id = $1', [socket.user.id]);
+      }
+    } catch (e) {
+      console.error('Error on disconnect:', e);
+    }
+  });
+
   socket.on('channel:join', async ({ channelId }) => {
     const member = await pool.query(
       'SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2',
@@ -61,27 +79,58 @@ io.on('connection', async (socket) => {
     socket.join(`channel:${channelId}`);
   });
 
-  socket.on('message:send', async ({ channelId, text }, ack) => {
-    if (!text || !text.trim()) return ack?.({ error: 'text required' });
+  socket.on('message:send', async ({ channelId, text, image_url }, ack) => {
+    if ((!text || !text.trim()) && !image_url) return ack?.({ error: 'text or image required' });
+    
     const member = await pool.query(
       'SELECT 1 FROM channel_members WHERE channel_id = $1 AND user_id = $2',
       [channelId, socket.user.id]
     );
     if (member.rowCount === 0) return ack?.({ error: 'not a member' });
 
+    const ch = await pool.query('SELECT is_direct FROM channels WHERE id = $1', [channelId]);
+    if (ch.rows[0]?.is_direct) {
+      const other = await pool.query(
+        'SELECT user_id FROM channel_members WHERE channel_id = $1 AND user_id != $2 LIMIT 1',
+        [channelId, socket.user.id]
+      );
+      if (other.rowCount > 0) {
+        const targetId = other.rows[0].user_id;
+        
+        const iBlocked = await pool.query(
+          'SELECT 1 FROM user_bans WHERE blocker_id = $1 AND blocked_id = $2',
+          [socket.user.id, targetId]
+        );
+        if (iBlocked.rowCount > 0) {
+          return ack?.({ error: 'Вы заблокировали этого пользователя. Разблокируйте, чтобы написать.' });
+        }
+
+        const theyBlocked = await pool.query(
+          'SELECT 1 FROM user_bans WHERE blocker_id = $1 AND blocked_id = $2',
+          [targetId, socket.user.id]
+        );
+        if (theyBlocked.rowCount > 0) {
+          return ack?.({ error: 'Вы заблокированы этим пользователем' });
+        }
+      }
+    }
+
+    const userRes = await pool.query('SELECT avatar_url FROM users WHERE id = $1', [socket.user.id]);
+    const avatar_url = userRes.rows[0]?.avatar_url || null;
+
     const r = await pool.query(
-      `INSERT INTO messages (channel_id, user_id, text, type) VALUES ($1, $2, $3, 'user')
-       RETURNING id, text, type, created_at, user_id`,
-      [channelId, socket.user.id, text.trim()]
+      `INSERT INTO messages (channel_id, user_id, text, type, image_url) 
+       VALUES ($1, $2, $3, 'user', $4)
+       RETURNING id, text, type, created_at, user_id, image_url`,
+      [channelId, socket.user.id, text ? text.trim() : '', image_url || null]
     );
 
-    // Снимаем флаг скрытия для всех остальных участников канала
     await pool.query(
       'UPDATE channel_members SET is_hidden = false WHERE channel_id = $1 AND user_id != $2',
       [channelId, socket.user.id]
     );
 
-    const msg = { ...r.rows[0], username: socket.user.username, channel_id: channelId };
+    const msg = { ...r.rows[0], username: socket.user.username, avatar_url, channel_id: channelId };
     io.to(`channel:${channelId}`).emit('message:new', msg);
     ack?.({ ok: true, message: msg });
   });

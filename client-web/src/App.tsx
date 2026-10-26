@@ -3,7 +3,15 @@ import Login from './Login';
 import Chat from './Chat';
 import './App.css';
 
-export type Session = { token: string; user: { id: number; username: string } };
+export type User = { 
+  id: number; 
+  username: string; 
+  avatar_url?: string | null; 
+  bio?: string | null; 
+  last_seen_at?: string | null;
+};
+
+export type Session = { token: string; user: User };
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(() => {
@@ -29,3 +37,4 @@ export default function App() {
     <Login onLogin={onLogin} />
   );
 }
+
