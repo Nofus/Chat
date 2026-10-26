@@ -1,5 +1,5 @@
 node_modules/
-
+load-tests/node_modules/
 .env
 .env.local
 .env.*.local
