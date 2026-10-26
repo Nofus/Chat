@@ -1,13 +1,17 @@
-const BASE = 'http://localhost:3000';
+const BASE = '/api';
 
 export type User = { id: number; username: string };
 export type Channel = {
   id: number;
   name: string;
+  display_name?: string;
   created_at?: string;
   joined: boolean;
   is_private: boolean;
   is_system: boolean;
+  is_direct: boolean;
+  unread_count?: number;  // <--- добавили
+  last_msg_time?: string; // <--- добавили
 };
 export type Message = {
   id: number;
@@ -65,4 +69,13 @@ export const api = {
     request<{ ok: true }>(`/channels/${id}/leave`, { method: 'DELETE' }),
   messages: (channelId: number) =>
     request<Message[]>(`/channels/${channelId}/messages`),
+  searchUsers: (q: string) =>
+    request<{ id: number; username: string }[]>(`/channels/users/search?q=${encodeURIComponent(q)}`),
+  markAsRead: (id: number) =>
+    request<{ ok: true }>(`/channels/${id}/read`, { method: 'POST' }),
+  startDirectChat: (targetUserId: number) =>
+    request<{ id: number }>('/channels/direct', {
+      method: 'POST',
+      body: JSON.stringify({ targetUserId }),
+    }),
 };

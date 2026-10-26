@@ -18,7 +18,7 @@ app.use('/channels/:channelId/messages', messagesRouter);
 
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' } });
-app.set('io', io); // чтобы роутеры могли emit-ить
+app.set('io', io);
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -38,8 +38,19 @@ io.use((socket, next) => {
   } catch { next(new Error('invalid token')); }
 });
 
-io.on('connection', (socket) => {
+io.on('connection', async (socket) => {
   console.log('socket connected:', socket.id, 'user:', socket.user.username);
+
+  // Подписываем на все каналы пользователя (включая скрытые DM, чтобы получать уведомления)
+  try {
+    const channels = await pool.query(
+      'SELECT channel_id FROM channel_members WHERE user_id = $1',
+      [socket.user.id]
+    );
+    channels.rows.forEach(row => socket.join(`channel:${row.channel_id}`));
+  } catch (e) {
+    console.error('Error joining channels:', e);
+  }
 
   socket.on('channel:join', async ({ channelId }) => {
     const member = await pool.query(
@@ -59,10 +70,17 @@ io.on('connection', (socket) => {
     if (member.rowCount === 0) return ack?.({ error: 'not a member' });
 
     const r = await pool.query(
-      `INSERT INTO messages (channel_id, user_id, text) VALUES ($1, $2, $3)
-       RETURNING id, text, created_at, user_id`,
+      `INSERT INTO messages (channel_id, user_id, text, type) VALUES ($1, $2, $3, 'user')
+       RETURNING id, text, type, created_at, user_id`,
       [channelId, socket.user.id, text.trim()]
     );
+
+    // Снимаем флаг скрытия для всех остальных участников канала
+    await pool.query(
+      'UPDATE channel_members SET is_hidden = false WHERE channel_id = $1 AND user_id != $2',
+      [channelId, socket.user.id]
+    );
+
     const msg = { ...r.rows[0], username: socket.user.username, channel_id: channelId };
     io.to(`channel:${channelId}`).emit('message:new', msg);
     ack?.({ ok: true, message: msg });

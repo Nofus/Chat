@@ -12,7 +12,8 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
   const [text, setText] = useState('');
 
   const [search, setSearch] = useState('');
-  const [searchResults, setSearchResults] = useState<Channel[]>([]);
+  const [searchChannels, setSearchChannels] = useState<Channel[]>([]);
+  const [searchUsers, setSearchUsers] = useState<{ id: number; username: string }[]>([]);
 
   const [showCreate, setShowCreate] = useState(false);
   const [newName, setNewName] = useState('');
@@ -22,36 +23,68 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
   const socketRef = useRef<Socket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
 
+  const refreshChannels = () => api.channels().then(setChannels).catch(console.error);
+
   useEffect(() => {
     socketRef.current = connectSocket(session.token);
     return () => disconnectSocket();
   }, [session.token]);
 
-  const refreshChannels = () =>
-    api.channels().then(setChannels).catch(console.error);
-
   useEffect(() => { refreshChannels(); }, []);
 
+  // Глобальная подписка на новые сообщения (для обновления сайдбара: бейджи и сортировка)
   useEffect(() => {
-    if (!search.trim()) { setSearchResults([]); return; }
-    const t = setTimeout(() => {
-      api.searchChannels(search).then(setSearchResults).catch(console.error);
-    }, 250);
-    return () => clearTimeout(t);
-  }, [search]);
+    const s = socketRef.current;
+    if (!s) return;
+    const onNewGlobal = () => refreshChannels();
+    s.on('message:new', onNewGlobal);
+    return () => { s.off('message:new', onNewGlobal); };
+  }, []);
 
+  // Подписка для активного канала (для добавления сообщений в ленту)
   useEffect(() => {
     const s = socketRef.current;
     if (!activeId || !s) return;
+
     setMessages([]);
-    api.messages(activeId).then(setMessages).catch(console.error);
+    api.messages(activeId).then((msgs) => {
+      setMessages(msgs);
+      api.markAsRead(activeId).then(refreshChannels);
+    }).catch(console.error);
+
     s.emit('channel:join', { channelId: activeId });
+
     const onNew = (m: Message) => {
-      if (m.channel_id === activeId) setMessages((prev) => [...prev, m]);
+      if (m.channel_id === activeId) {
+        setMessages((prev) => [...prev, m]);
+        if (m.user_id !== session.user.id) {
+          api.markAsRead(activeId).then(refreshChannels);
+        }
+      }
     };
+
     s.on('message:new', onNew);
     return () => { s.off('message:new', onNew); };
   }, [activeId]);
+
+  useEffect(() => {
+    if (!search.trim()) {
+      setSearchChannels([]);
+      setSearchUsers([]);
+      return;
+    }
+    const t = setTimeout(async () => {
+      try {
+        const [chs, usrs] = await Promise.all([
+          api.searchChannels(search),
+          api.searchUsers(search)
+        ]);
+        setSearchChannels(chs);
+        setSearchUsers(usrs);
+      } catch (e) { console.error(e); }
+    }, 250);
+    return () => clearTimeout(t);
+  }, [search]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -67,7 +100,7 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
 
   async function joinAndOpen(c: Channel) {
     try {
-      if (c.is_private) {
+      if (c.is_private && !c.is_system && !c.is_direct) {
         const pw = prompt(`Пароль для канала «${c.name}»:`);
         if (!pw) return;
         await api.joinChannel(c.id, pw);
@@ -77,22 +110,28 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
       await refreshChannels();
       setActiveId(c.id);
       setSearch('');
-      setSearchResults([]);
+    } catch (e: any) { alert(e.message); }
+  }
+
+  async function openDirect(userId: number) {
+    try {
+      const res = await api.startDirectChat(userId);
+      await refreshChannels();
+      setActiveId(res.id);
+      setSearch('');
     } catch (e: any) { alert(e.message); }
   }
 
   async function leaveChannel(c: Channel) {
-    if (!confirm(`Выйти из канала «${c.name}»?`)) return;
+    const action = c.is_direct ? 'Скрыть диалог' : 'Выйти из канала';
+    const targetName = c.is_direct ? c.display_name : (c.display_name || c.name);
+
+    if (!confirm(`${action} «${targetName}»?`)) return;
     try {
       await api.leaveChannel(c.id);
-      if (activeId === c.id) {
-        setActiveId(null);
-        setMessages([]);
-      }
+      if (activeId === c.id) { setActiveId(null); setMessages([]); }
       await refreshChannels();
-    } catch (e: any) {
-      alert(e.message);
-    }
+    } catch (e: any) { alert(e.message); }
   }
 
   async function createChannel(e: React.FormEvent) {
@@ -117,15 +156,20 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
         <div className="search-box">
           <input
             className="search"
-            placeholder="Найти канал..."
+            placeholder="Найти канал или юзера..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
           />
-          {searchResults.length > 0 && (
+          {(searchChannels.length > 0 || searchUsers.length > 0) && (
             <ul className="search-results">
-              {searchResults.map((c) => (
-                <li key={c.id} onClick={() => joinAndOpen(c)}>
-                  {c.is_private ? '🔒' : '#'} {c.name}
+              {searchUsers.map((u) => (
+                <li key={`u_${u.id}`} onClick={() => openDirect(u.id)}>
+                  👤 {u.username}
+                </li>
+              ))}
+              {searchChannels.map((c) => (
+                <li key={`c_${c.id}`} onClick={() => joinAndOpen(c)}>
+                  {c.is_system && c.name === 'general' ? '📢 Публичный' : c.is_private ? '🔒' : '#'} {c.is_system && c.name === 'general' ? '' : c.name}
                 </li>
               ))}
             </ul>
@@ -138,51 +182,36 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
 
         {showCreate && (
           <form className="create-form" onSubmit={createChannel}>
-            <input
-              placeholder="Имя канала"
-              value={newName}
-              onChange={(e) => setNewName(e.target.value)}
-              autoFocus
-            />
+            <input placeholder="Имя канала" value={newName} onChange={(e) => setNewName(e.target.value)} autoFocus />
             <label>
-              <input
-                type="checkbox"
-                checked={newPrivate}
-                onChange={(e) => setNewPrivate(e.target.checked)}
-              />
+              <input type="checkbox" checked={newPrivate} onChange={(e) => setNewPrivate(e.target.checked)} />
               Приватный
             </label>
             {newPrivate && (
-              <input
-                type="password"
-                placeholder="Пароль (мин 4 символа)"
-                value={newPassword}
-                onChange={(e) => setNewPassword(e.target.value)}
-              />
+              <input type="password" placeholder="Пароль (мин 4 символа)" value={newPassword} onChange={(e) => setNewPassword(e.target.value)} />
             )}
             <button type="submit">Создать</button>
           </form>
         )}
 
         <ul className="channel-list">
-          {channels.map((c) => (
-            <li
-              key={c.id}
-              className={`channel-item ${c.id === activeId ? 'active' : ''}`}
-              onClick={() => setActiveId(c.id)}
-            >
-              <span>
-                {c.name === 'general' ? 'Публичный' : c.name}
-              </span>
-              <button
-                className="leave-btn"
-                onClick={(e) => { e.stopPropagation(); leaveChannel(c); }}
-                title="Выйти из канала"
-              >
-                ✕
-              </button>
-            </li>
-          ))}
+          {channels.map((c) => {
+            const isDirect = c.is_direct;
+            const label = c.is_system && c.name === 'general' ? 'Публичный' : (c.display_name || c.name);
+            const icon = isDirect ? '👤' : c.is_system ? '📢' : c.is_private ? '🔒' : '#';
+
+            return (
+              <li key={c.id} className={`channel-item ${c.id === activeId ? 'active' : ''}`} onClick={() => setActiveId(c.id)}>
+                <div className="channel-info">
+                  <span>{icon} {label}</span>
+                  {c.unread_count !== undefined && c.unread_count > 0 && c.id !== activeId && (
+                    <span className="unread-badge">{c.unread_count}</span>
+                  )}
+                </div>
+                <button className="leave-btn" onClick={(e) => { e.stopPropagation(); leaveChannel(c); }} title={c.is_direct ? "Скрыть" : "Выйти"}>✕</button>
+              </li>
+            );
+          })}
         </ul>
       </aside>
 
@@ -192,15 +221,11 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
             <div className="messages">
               {messages.map((m) =>
                 m.type === 'system' ? (
-                  <div key={m.id} className="msg-system">
-                    <b>{m.username}</b> {m.text}
-                  </div>
+                  <div key={m.id} className="msg-system"><b>{m.username}</b> {m.text}</div>
                 ) : (
                   <div key={m.id} className="msg">
                     <b>{m.username}</b>
-                    <span className="time">
-                      {new Date(m.created_at).toLocaleTimeString()}
-                    </span>
+                    <span className="time">{new Date(m.created_at).toLocaleTimeString()}</span>
                     <div>{m.text}</div>
                   </div>
                 )
@@ -208,17 +233,12 @@ export default function Chat({ session, onLogout }: { session: Session; onLogout
               <div ref={bottomRef} />
             </div>
             <form onSubmit={send} className="composer">
-              <input
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Сообщение..."
-                autoFocus
-              />
+              <input value={text} onChange={(e) => setText(e.target.value)} placeholder="Сообщение..." autoFocus />
               <button>→</button>
             </form>
           </>
         ) : (
-          <p className="placeholder">Выбери канал слева</p>
+          <p className="placeholder">Выбери канал или юзера слева</p>
         )}
       </main>
     </div>

@@ -50,6 +50,13 @@ router.post('/', requireAuth, async (req, res) => {
        RETURNING id, text, type, created_at, user_id`,
       [channelId, req.user.id, text.trim()]
     );
+
+    // Снимаем флаг скрытия для всех остальных участников
+    await pool.query(
+      'UPDATE channel_members SET is_hidden = false WHERE channel_id = $1 AND user_id != $2',
+      [channelId, req.user.id]
+    );
+
     const msg = { ...r.rows[0], username: req.user.username, channel_id: channelId };
     req.app.get('io').to(`channel:${channelId}`).emit('message:new', msg);
     res.status(201).json(msg);

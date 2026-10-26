@@ -5,7 +5,7 @@ let socket: Socket | null = null;
 export function connectSocket(token: string): Socket {
   if (socket && socket.connected) return socket;
   if (socket) socket.disconnect();
-  socket = io('http://localhost:3000', { auth: { token } });
+  socket = io({ auth: { token } });
   return socket;
 }
 

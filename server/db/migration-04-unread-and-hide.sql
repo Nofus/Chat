@@ -1,0 +1,3 @@
+ALTER TABLE channel_members ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
+
+ALTER TABLE channel_members ADD COLUMN IF NOT EXISTS last_read_message_id INTEGER NOT NULL DEFAULT 0;
